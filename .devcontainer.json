@@ -1,18 +1,35 @@
 {
-    "name": "arpa_veneto_weather",
+    "name": "arpa_emilia_romagna_weather",
     "image": "mcr.microsoft.com/vscode/devcontainers/python:3.14-trixie",
-    "postCreateCommand": "scripts/setup",
+    "postCreateCommand": "scripts/post-create.sh",
     "postStartCommand": "scripts/bootstrap",
-    "forwardPorts": [8123],
+    "containerEnv": {
+        "OPENCODE_SERVER_PASSWORD": "${localEnv:OPENCODE_SERVER_PASSWORD}",
+        "MISE_YES": "1",
+        "RTK_TELEMETRY_DISABLED": "1",
+        "PATH": "/home/vscode/.local/bin:/home/vscode/.local/share/mise/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    },
+    "forwardPorts": [
+        8123,
+        096
+    ],
     "portsAttributes": {
         "8123": {
             "label": "Home Assistant",
             "onAutoForward": "notify"
+        },
+        "4096": {
+            "label": "OpenCode Web",
+            "onAutoForward": "openBrowser"
         }
+    },
+    "features": {
+        "ghcr.io/devcontainers-extra/features/mise:1": {}
     },
     "customizations": {
         "vscode": {
             "extensions": [
+                "hverlin.mise-vscode",
                 "charliermarsh.ruff",
                 "ms-python.python",
                 "github.vscode-pull-request-github"
@@ -25,5 +42,9 @@
                 }
             }
         }
-    }
+    },
+    "mounts": [
+        "source=${localEnv:HOME}/.config/opencode,target=/home/vscode/.config/opencode,type=bind",
+        "source=${localEnv:HOME}/.local/share/opencode,target=/home/vscode/.local/share/opencode,type=bind"
+    ]
 }

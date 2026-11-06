@@ -1,4 +1,4 @@
-"""Main entity for Arpa Veneto Weather component."""
+"""Main entity for ARPA Emilia-Romagna Weather component."""
 from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime
@@ -17,33 +17,22 @@ from .const import (
     CONF_METAR_STATION,
     CONF_OBSERVATIONS,
     DOMAIN,
-    API_BASE,
     KEY_COORDINATOR
 )
 
 
-async def async_get_forecast(session):
-    """Fetch weather forecast data."""
-    url = f"{API_BASE}/bollettini_meteo_giornate"
-    async with session.get(url) as response:
-        response.raise_for_status()
-        data = await response.json()
-        return [entry for entry in data if entry["zonaid"] == 13]
-
-
-async def async_get_current_conditions(session, station_id):
-    """Fetch current weather conditions."""
-    url = f"{API_BASE}/meteo_meteogrammi_tabella?codseqst={station_id}"
-    async with session.get(url) as response:
-        response.raise_for_status()
-        data = await response.json()
-        return data[0] if data else {}
-
-
 async def async_setup_entry(hass, config_entry, async_add_entities):
-    """Set up ARPA Veneto sensors from a config entry."""
+    """Set up ARPA Emilia-Romagna sensors from a config entry."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id][KEY_COORDINATOR]
-    async_add_entities([ArpaVenetoWeatherEntity(coordinator, config_entry)])
+    async_add_entities([ArpaEmiliaRomagnaWeatherEntity(coordinator, config_entry)])
+
+def _naive_local(value):
+    """Return a datetime as naive local time, so it can be compared with now()."""
+
+    if value.tzinfo is not None:
+        return value.astimezone().replace(tzinfo=None)
+    return value
+
 
 class DateTimeEncoder(json.JSONEncoder):
     """Encoder for datetime."""
@@ -54,8 +43,8 @@ class DateTimeEncoder(json.JSONEncoder):
             return obj.isoformat()
         return super().default(obj)
 
-class ArpaVenetoWeatherEntity(CoordinatorEntity, WeatherEntity):
-    """Representation of the ARPA Veneto weather entity."""
+class ArpaEmiliaRomagnaWeatherEntity(CoordinatorEntity, WeatherEntity):
+    """Representation of the ARPA Emilia-Romagna weather entity."""
 
     def __init__(self, coordinator, config_entry):
         """Init the entity with config data."""
@@ -70,11 +59,11 @@ class ArpaVenetoWeatherEntity(CoordinatorEntity, WeatherEntity):
         self.expose_forecast_raw = config_entry.options.get(CONF_EXPOSE_FORECAST_RAW)
         self.expose_sensors_raw = config_entry.options.get(CONF_EXPOSE_SENSORS_RAW)
 
-        self._attr_unique_id = f"weather.arpav_{self.comune_id}_{self.station_id}"
+        self._attr_unique_id = f"weather.arpae_{self.comune_id}_{self.station_id}"
 
         self._attr_has_entity_name = True
-        self._attr_translation_key = 'arpav'
-        self._attr_attribution = "Weather data by ARPA Veneto"
+        self._attr_translation_key = 'arpae'
+        self._attr_attribution = "Weather data by ARPA Emilia-Romagna"
 
         observations = config_entry.options.get(CONF_OBSERVATIONS) or {}
         if observations.get(CONF_METAR_STATION) not in (None, "None"):
@@ -84,14 +73,13 @@ class ArpaVenetoWeatherEntity(CoordinatorEntity, WeatherEntity):
             "comune_name": self.comune_name,
             "station_name": self.station_name,
         }
-        self._attr_available = False  # Default to unavailable
 
     @property
     def device_info(self) -> DeviceInfo:
         """Return the device info."""
         return DeviceInfo(
             identifiers={(DOMAIN, self._config_entry.entry_id)},
-            name="Arpa Veneto Weather",
+            name="ARPA Emilia-Romagna Weather",
             entry_type=DeviceEntryType.SERVICE
         )
 
@@ -171,14 +159,12 @@ class ArpaVenetoWeatherEntity(CoordinatorEntity, WeatherEntity):
     async def async_forecast_twice_daily(self) -> list[Forecast] | None:
         """Return the twice-daily forecast."""
         forecasts = self._forecasts()
-        self._attr_available = forecasts is not None and len(forecasts) > 0
 
         return [f for f in forecasts if f.get('type') == 'twice_daily']
 
     async def async_forecast_daily(self) -> list[Forecast] | None:
         """Return the daily forecast."""
         forecasts = self._forecasts()
-        self._attr_available = forecasts is not None and len(forecasts) > 0
 
         # Step 1: Group by date
         grouped_data = defaultdict(list)
@@ -240,13 +226,18 @@ class ArpaVenetoWeatherEntity(CoordinatorEntity, WeatherEntity):
 
         forecasts = self._forecasts()
 
-        # Find forecast with datetime closest to now
-        now = datetime.now()
-        nearest = min(forecasts, key=lambda forecast: abs(forecast["datetime"] - now))
-
         def get_attr(entry, key):
-            value = entry.get(key)
+            value = entry.get(key) if entry else None
             return value if value is not None else ""
+
+        nearest = None
+        if forecasts:
+            # Find forecast with datetime closest to now
+            now = datetime.now()
+            nearest = min(
+                forecasts,
+                key=lambda forecast: abs(_naive_local(forecast["datetime"]) - now),
+            )
 
         payload = {
             "forecast_today_description": get_attr(nearest, "weather_description"),

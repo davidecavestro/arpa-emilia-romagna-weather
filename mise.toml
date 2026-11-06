@@ -1,0 +1,27 @@
+# Toolchain for ewge. The devcontainer image is deliberately thin: everything
+# language-specific (Rust, Node, dbmate, OpenCode, rtk) is installed by mise
+# from this file, so local and container runs use the same versions.
+#
+# `allow_low_downloads` is load-bearing for @opencode/cli: mise's npm backend
+# refuses packages younger than its minimum-package-age unless this is set,
+# interactively (TUI prompt) or headless (fatal error). Neither an exact pin
+# nor MISE_YES suppresses that check. Bump the pin deliberately.
+[tools]
+node = "lts"
+rtk = "latest"
+"npm:@opencode/cli" = { version = "2.0.26", allow_low_downloads = "true", allow_builds = ["@opencode/cli"] }
+
+# ---------------------------------------------------------------------------
+# Setup / health
+# ---------------------------------------------------------------------------
+[tasks.setup]
+description = "Install python deps (idempotent)"
+run = "bash scripts/setup"
+
+
+# ---------------------------------------------------------------------------
+# Agent tooling
+# ---------------------------------------------------------------------------
+[tasks.init-rtk]
+description = "Patch OpenCode's global instructions with rtk's output-filtering guide"
+run = "rtk init -g --opencode --auto-patch"

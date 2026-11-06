@@ -8,11 +8,11 @@ refresh_data:
       required: false
       selector:
         config_entry:
-          integration: arpa_veneto_weather
+          integration: arpa_emilia_romagna_weather
 
 archive_brightness:
   name: "Archive night sky brightness"
-  description: "Import the night sky brightness readings the ARPAV API exposes (about the last 72 hours) as long-term statistics"
+  description: "Import the night sky brightness readings the ARPAE API exposes as long-term statistics"
   fields:
     entry_id:
       name: "Station"
@@ -20,4 +20,4 @@ archive_brightness:
       required: false
       selector:
         config_entry:
-          integration: arpa_veneto_weather
+          integration: arpa_emilia_romagna_weather

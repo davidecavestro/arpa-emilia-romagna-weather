@@ -1,6 +1,6 @@
 """Provenance of the observations feeding the entities.
 
-A single weather station in Home Assistant is fed by several ARPAV networks
+A single weather station in Home Assistant is fed by several ARPAE networks
 (meteogram, air quality, night sky brightness) and by the forecast bulletin,
 each with its own location and its own publishing latency. Every value
 therefore carries the origin it was observed by, exposed as extra state

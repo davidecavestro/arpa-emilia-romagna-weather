@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "arpa-veneto-weather"
+name = "arpa-emilia-romagna-weather"
 version = "0.1.0"
-description = "Home Assistant integration for Arpa Veneto Weather current conditions and forecast bulletins"
+description = "Home Assistant integration for ARPA Emilia-Romagna Weather current conditions and forecast bulletins"
 readme = "README.md"
 license = {text = "BSD-3-Clause"}
 requires-python = ">=3.11"

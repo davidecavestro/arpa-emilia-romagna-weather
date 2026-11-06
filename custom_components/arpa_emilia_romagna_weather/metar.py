@@ -1,6 +1,6 @@
-"""Optional METAR observations, used to complete the ARPAV data.
+"""Optional METAR observations, used to complete the ARPAE data.
 
-ARPAV weather stations do not observe the state of the sky, and several of them
+ARPAE weather stations do not observe the state of the sky, and several of them
 publish neither visibility nor pressure. Aerodromes do: a METAR is an actual
 observation, issued every 30 minutes with a few minutes of latency, and it
 reports cloud cover layer by layer.

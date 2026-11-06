@@ -1,4 +1,4 @@
-"""Sensors for Arpa Veneto Weather component."""
+"""Sensors for ARPA Emilia-Romagna Weather component."""
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers.device_registry import DeviceEntryType
 from homeassistant.helpers.entity import DeviceInfo
@@ -10,18 +10,27 @@ from .const import (
 )
 from datetime import datetime
 
+
+def _naive_local(value):
+    """Return a datetime as naive local time, so it can be compared with now()."""
+
+    if value.tzinfo is not None:
+        return value.astimezone().replace(tzinfo=None)
+    return value
+
+
 async def async_setup_entry(hass, config_entry, async_add_entities):
-    """Set up ARPA Veneto sensors from a config entry."""
+    """Set up ARPA Emilia-Romagna sensors from a config entry."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id][KEY_COORDINATOR]
 
     # create a sensor for each sensor type in SENSOR_TYPES
     sensors = []
     for sensor_type in SENSOR_TYPES:
-        sensors.append(ArpaVenetoSensor(coordinator, config_entry, sensor_type))
+        sensors.append(ArpaEmiliaRomagnaSensor(coordinator, config_entry, sensor_type))
     async_add_entities(sensors)
 
-class ArpaVenetoSensor(CoordinatorEntity[DataUpdateCoordinator], SensorEntity):
-    """Representation of an ARPA Veneto sensor."""
+class ArpaEmiliaRomagnaSensor(CoordinatorEntity[DataUpdateCoordinator], SensorEntity):
+    """Representation of an ARPA Emilia-Romagna sensor."""
 
     def __init__(self, coordinator, config_entry, sensor_type):
         """Initialize the sensor."""
@@ -36,7 +45,7 @@ class ArpaVenetoSensor(CoordinatorEntity[DataUpdateCoordinator], SensorEntity):
         self._attr_state_class = sensor.get("state_class") # type: ignore
         self._attr_native_unit_of_measurement = sensor.get("unit")
 
-        self._attr_unique_id = f"arpav_{sensor_type}_{self.station_id}"
+        self._attr_unique_id = f"arpae_{sensor_type}_{self.station_id}"
 
         self._attr_has_entity_name = True
         self._attr_translation_key = sensor_type
@@ -47,7 +56,7 @@ class ArpaVenetoSensor(CoordinatorEntity[DataUpdateCoordinator], SensorEntity):
         """Return the device info."""
         return DeviceInfo(
             identifiers={(DOMAIN, self._config_entry.entry_id)},
-            name="Arpa Veneto Weather",
+            name="ARPA Emilia-Romagna Weather",
             entry_type=DeviceEntryType.SERVICE
         )
 
@@ -55,15 +64,21 @@ class ArpaVenetoSensor(CoordinatorEntity[DataUpdateCoordinator], SensorEntity):
     def state(self):
         """Return the state of the sensor."""
         if self.sensor_type == "precipitation_probability":
-            forecasts = self.coordinator.data["forecast"]
+            forecasts = self.coordinator.data.get("forecast") or []
+            if not forecasts:
+                return None
 
             # Find forecast with datetime closest to now
             now = datetime.now()
-            nearest = min(forecasts, key=lambda forecast: abs(forecast["datetime"] - now))
+            nearest = min(
+                forecasts,
+                key=lambda forecast: abs(
+                    _naive_local(forecast["datetime"]) - now),
+            )
 
             def get_attr(entry, key):
                 value = entry.get(key)
-                return value if value is not None else ""
+                return value if value != "" else None
 
             return get_attr(nearest, "precipitation_probability")
 

@@ -1,11 +1,15 @@
-"""Constants for Arpa Veneto Weather component."""
+"""Constants for ARPA Emilia-Romagna Weather component."""
 
-DOMAIN = "arpa_veneto_weather"
+DOMAIN = "arpa_emilia_romagna_weather"
 
 KEY_COORDINATOR = "coordinator"
 KEY_UNSUBSCRIBER = "options_unsubscriber"
 
-API_BASE = "https://api.arpa.veneto.it/REST/v1"
+API_BASE = "https://apps.arpae.it/REST"
+
+# Verified realtime observations: newline-delimited JSON, one station snapshot
+# per line. It must be read as text, never through a JSON parser on the whole body.
+REALTIME_URL = "https://dati-simc.arpae.it/opendata/osservati/meteo/realtime/realtime.jsonl"
 
 CONF_EXPOSE_FORECAST_JSON = "expose_forecast_json"
 CONF_EXPOSE_FORECAST_RAW = "expose_forecast_raw"
@@ -52,6 +56,7 @@ CONF_ARCHIVE_BRIGHTNESS = "archive_brightness"
 # What to report as the current condition while the sun is above the horizon
 CONF_DAY_CONDITION = "day_condition"
 CONF_DAY_CONDITION_RADIATION = "day_condition_radiation"
+CONF_DAY_CONDITION_RADIATION_OR_FORECAST = "day_condition_radiation_or_forecast"
 CONF_DAY_CONDITION_RADIATION_OR_METAR = "day_condition_radiation_or_metar"
 CONF_DAY_CONDITION_METAR = "day_condition_metar"
 CONF_DAY_CONDITION_FORECAST = "day_condition_forecast"
@@ -90,8 +95,8 @@ SENSOR_TYPES = {
         "state_class": "measurement",
     },
     "precipitation": {
-        "name": "Precipitation in 5 minutes",
-        "unit": "mm/5min",
+        "name": "Precipitation (last interval)",
+        "unit": "mm",
         "device_class": "precipitation",
         "state_class": "measurement",
     },
@@ -104,7 +109,7 @@ SENSOR_TYPES = {
         "name": "Precipitation intensity (mm/h)",
         "unit": "mm/h",
         "device_class": "precipitation_intensity",
-        "state_class": "total_increasing",
+        "state_class": "measurement",
     },
     "precipitation_cumulative_1h": {
         "name": "Precipitation cumulative 1h",

@@ -5,7 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: Debug Arpa Veneto Weather",
+            "name": "Python: Debug ARPA Emilia-Romagna Weather",
             "type": "debugpy",
             "request": "attach",
             "justMyCode": true,
@@ -15,7 +15,7 @@
             },
             "pathMappings": [
                 {
-                    "localRoot": "/workspaces/arpa-veneto-weather",
+                    "localRoot": "/workspaces/arpa-emilia-romagna-weather",
                     "remoteRoot": "."
                 }
             ]

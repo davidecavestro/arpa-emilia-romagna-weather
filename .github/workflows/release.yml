@@ -29,19 +29,19 @@ jobs:
         shell: "bash"
         run: |
           yq -i -o json '.version="${{ github.ref_name }}"' \
-            "${{ github.workspace }}/custom_components/arpa_veneto_weather/manifest.json"
+            "${{ github.workspace }}/custom_components/arpa_emilia_romagna_weather/manifest.json"
 
       - name: "ZIP the integration directory"
         shell: "bash"
         run: |
-          cd "${{ github.workspace }}/custom_components/arpa_veneto_weather"
-          zip arpa-veneto-weather.zip -r ./
+          cd "${{ github.workspace }}/custom_components/arpa_emilia_romagna_weather"
+          zip arpa-emilia-romagna-weather.zip -r ./
 
       - name: "Upload the ZIP file to the release"
         uses: softprops/action-gh-release@v3
         with:
           body: ${{ steps.changelog.outputs.changes }}
-          files: ${{ github.workspace }}/custom_components/arpa_veneto_weather/arpa-veneto-weather.zip
+          files: ${{ github.workspace }}/custom_components/arpa_emilia_romagna_weather/arpa-emilia-romagna-weather.zip
 
       - name: Commit CHANGELOG.md
         uses: stefanzweifel/git-auto-commit-action@v7

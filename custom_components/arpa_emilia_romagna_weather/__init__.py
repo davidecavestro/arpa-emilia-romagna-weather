@@ -1,4 +1,4 @@
-"""The Arpa Veneto Weather integration."""
+"""The ARPA Emilia-Romagna Weather integration."""
 
 import asyncio
 import logging
@@ -11,7 +11,10 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import async_track_time_change
 
 from .brightness_statistics import async_archive_brightness
-from .coordinator import ArpaVenetoDataUpdateCoordinator
+from .coordinator import (
+    ArpaEmiliaRomagnaDataUpdateCoordinator,
+    async_migrate_legacy_entry,
+)
 
 from .const import (
     CONF_ARCHIVE_BRIGHTNESS,
@@ -31,11 +34,28 @@ BRIGHTNESS_ARCHIVE_HOUR = 11
 BRIGHTNESS_ARCHIVE_MINUTE = 15
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up ARPA Veneto Weather from a config entry."""
+    """Set up ARPA Emilia-Romagna Weather from a config entry."""
 
+    # Entries created by the old fork point at a qa_stazioni air quality
+    # station; resolve them to the nearest meteo station before entities are
+    # created, so the names and forecast zone are correct from the start.
+    try:
+        migrated = await async_migrate_legacy_entry(hass, entry)
+    except Exception:  # noqa: BLE001 - a migration must never block setup
+        _LOGGER.exception("Unable to migrate the legacy ARPAE config entry")
+    else:
+        if migrated:
+            hass.config_entries.async_update_entry(
+                entry,
+                data=migrated,
+                title=f"Stazione di {migrated['meteo_station_name']}",
+            )
+
+    # The realtime file is several megabytes and is updated every 15 minutes,
+    # so a 30 minute poll is both fresher than needed and far lighter.
     update_interval = timedelta(minutes=entry.options.get(
-        "update_interval", 5))  # Fetch data every 5 minutes
-    coordinator = ArpaVenetoDataUpdateCoordinator(
+        "update_interval", 30))
+    coordinator = ArpaEmiliaRomagnaDataUpdateCoordinator(
         hass,
         entry,
         update_interval,
@@ -90,7 +110,7 @@ def _async_schedule_brightness_archive(hass: HomeAssistant, entry: ConfigEntry, 
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
-    """Unload ARPA Veneto Weather config entry."""
+    """Unload ARPA Emilia-Romagna Weather config entry."""
     # await hass.config_entries.async_unload_platforms(entry, ["sensor"])
     # hass.data[DOMAIN].pop(entry.entry_id)
     # return True

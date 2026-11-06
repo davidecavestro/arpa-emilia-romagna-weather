@@ -1,0 +1,19 @@
+{
+    "domain": "arpa_emilia_romagna_weather",
+    "name": "ARPA Emilia-Romagna Weather",
+    "version": "0.1.0",
+    "iot_class": "cloud_polling",
+    "requirements": [
+        "aiohttp"
+    ],
+    "dependencies": [],
+    "after_dependencies": [
+        "recorder"
+    ],
+    "codeowners": [
+        "@davidecavestro"
+    ],
+    "config_flow": true,
+    "documentation": "https://github.com/davidecavestro/arpa-emilia-romagna-weather",
+    "issue_tracker": "https://github.com/davidecavestro/arpa-emilia-romagna-weather/issues"
+}

@@ -1,26 +1,24 @@
 {
-    "title": "Arpa Veneto Weather",
+    "title": "ARPA Emilia-Romagna Weather",
     "config": {
         "step": {
             "user": {
-                "title": "Configure Arpa Veneto Weather",
-                "description": "Choose the municipality to search for the weather zone to use for forecasts.",
+                "title": "Configure ARPA Emilia-Romagna Weather",
+                "description": "Choose the ARPAE weather station to use for current conditions.",
                 "data": {
-                    "comune_id": "Municipality",
-                    "zone_id": "Zone",
                     "station_id": "Weather Station"
                 }
             },
             "zone": {
-                "title": "Select Zone",
-                "description": "Choose a weather zone for the forecasts.",
+                "title": "Select Forecast Zone",
+                "description": "Choose the bulletin zone to use for the forecasts of {selected_station}.",
                 "data": {
-                    "zone_id": "Zone"
+                    "zone_id": "Forecast Zone"
                 }
             },
-            "station": {
-                "title": "Select Weather Station",
-                "description": "Choose a weather station for current conditions.",
+            "reconfigure": {
+                "title": "Reconfigure ARPA Emilia-Romagna Weather",
+                "description": "Choose the ARPAE weather station to use for current conditions.",
                 "data": {
                     "station_id": "Weather Station"
                 }
@@ -37,7 +35,7 @@
                 "sections": {
                     "observations": {
                         "name": "Additional observations",
-                        "description": "ARPAV stations do not observe the state of the sky, and some of them report neither visibility nor pressure. The aerodromes below, listed nearest first, publish a METAR observation every 30 minutes and can complete the missing data. Keep in mind that a distant aerodrome describes the general sky well and local fog or low clouds badly.",
+                        "description": "ARPAE stations do not observe the state of the sky, and some of them report neither visibility nor pressure. The aerodromes below, listed nearest first, publish a METAR observation every 30 minutes and can complete the missing data. Keep in mind that a distant aerodrome describes the general sky well and local fog or low clouds badly.",
                         "data": {
                             "metar_station": "Aerodrome issuing METAR",
                             "metar_fill_missing": "Use it for the data the station does not provide"
@@ -93,6 +91,7 @@
         "day_condition": {
             "options": {
                 "day_condition_radiation": "Solar radiation only",
+                "day_condition_radiation_or_forecast": "Solar radiation, forecast bulletin as a fallback",
                 "day_condition_radiation_or_metar": "Solar radiation, METAR observation as a fallback",
                 "day_condition_metar": "METAR observation, forecast as a fallback",
                 "day_condition_forecast": "Forecast bulletin",
@@ -121,7 +120,7 @@
                 "name": "Visibility in {station_name}"
             },
             "precipitation": {
-                "name": "Precipitation (last 5 minutes) in {station_name}"
+                "name": "Precipitation (last interval) in {station_name}"
             },
             "precipitation_probability": {
                 "name": "Precipitation probability in {station_name}"
@@ -164,7 +163,7 @@
             }
         },
         "weather": {
-            "arpav": {
+            "arpae": {
                 "name": "Conditions in {station_name} - forecast for {comune_name}"
             }
         }

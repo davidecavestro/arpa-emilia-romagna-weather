@@ -1,9 +1,9 @@
 {
-    "name": "Arpa Veneto Weather",
+    "name": "ARPA Emilia-Romagna Weather",
     "homeassistant": "2026.6.0",
     "content_in_root": false,
     "render_readme": true,
     "hide_default_branch": true,
     "zip_release": true,
-    "filename": "arpa-veneto-weather.zip"
+    "filename": "arpa-emilia-romagna-weather.zip"
 }

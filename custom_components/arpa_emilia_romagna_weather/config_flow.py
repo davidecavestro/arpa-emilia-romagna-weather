@@ -1,5 +1,7 @@
-"""Config flow to configure Arpa Veneto Weather component."""
+"""Config flow to configure ARPA Emilia-Romagna Weather component."""
+import json
 import logging
+import re
 
 import aiohttp
 import voluptuous as vol
@@ -10,6 +12,7 @@ from homeassistant.helpers import selector
 from .const import (
     DOMAIN,
     API_BASE,
+    REALTIME_URL,
     CONF_EXPOSE_FORECAST_JSON,
     CONF_EXPOSE_FORECAST_RAW,
     CONF_EXPOSE_SENSORS_RAW,
@@ -31,6 +34,7 @@ from .const import (
     CONF_OZONE_STATION,
     CONF_DAY_CONDITION,
     CONF_DAY_CONDITION_RADIATION,
+    CONF_DAY_CONDITION_RADIATION_OR_FORECAST,
     CONF_DAY_CONDITION_RADIATION_OR_METAR,
     CONF_DAY_CONDITION_METAR,
     CONF_DAY_CONDITION_FORECAST,
@@ -51,77 +55,172 @@ from .coordinator import haversine
 
 _LOGGER = logging.getLogger(__name__)
 
-async def fetch_zone_names():
-    """Fetch human-readable names for each zonaid."""
-    async with aiohttp.ClientSession() as session, session.get(f"{API_BASE}/bollettini_meteo_simboli_en") as response:
+def _natural_key(text):
+    """Sort labels containing numbers in a human order (C2 before C10)."""
+
+    return [int(part) if part.isdigit() else part.lower()
+            for part in re.split(r"(\d+)", str(text))]
+
+
+async def _fetch_realtime_entries():
+    """Return the realtime JSONL snapshots, one dict per station snapshot."""
+
+    async with aiohttp.ClientSession() as session, session.get(REALTIME_URL) as response:
         response.raise_for_status()
-        json_data = await response.json()
-        data = json_data.get("data", [])
+        text = await response.text()
 
-        # Map each zonaid to the first matching zona (zone name)
-        zone_id_to_name = {}
-        for entry in data:
-            zonaid = entry["zonaid"]
-            if zonaid not in zone_id_to_name:
-                zone_id_to_name[zonaid] = entry["zona"]
-
-        return dict(sorted(zone_id_to_name.items(), key=lambda item: item[1]))
-
-async def fetch_zones():
-    """Fetch the list of comuni and their corresponding data."""
-    async with aiohttp.ClientSession() as session, session.get(f"{API_BASE}/meteo_comuni") as response:
-        response.raise_for_status()
-        json_data = await response.json()
-        data = json_data.get("data", [])
-
-        # Map comune names to their IDs and zonaid
-        comune_id_to_name = {entry["id"]: f"{entry['comune']} ({entry['provincia'].title()})"
-                             for entry in sorted(data, key=lambda x: x["comune"])}
-        comuneid_to_zonaid = {entry["id"]: entry["zonaid"] for entry in data}
-        zone_id_to_name = {
-            entry["zonaid"]: f"Zona {entry['zonaid']}" for entry in data
-        }  # Placeholder for readable zone names
-
-        return comune_id_to_name, comuneid_to_zonaid, zone_id_to_name
+    entries = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return entries
 
 
 async def fetch_stations():
-    """Fetch the list of stations and their codes."""
-    async with aiohttp.ClientSession() as session, session.get(
-        f"{API_BASE}/meteo_meteogrammi?rete=MGRAMMI&coordcd=18&orario=0"
-    ) as response:
+    """Fetch the meteo stations from the verified realtime JSONL endpoint.
+
+    The station name from ``B01019`` is used as id: it is stable, human
+    readable, and it is what the coordinator matches against the feed.
+    """
+    entries = await _fetch_realtime_entries()
+
+    stations = {}
+    with_temperature = set()
+    for entry in entries:
+        name = latitude = longitude = None
+        has_temperature = False
+        for item in entry.get("data", []):
+            variables = item.get("vars") or {}
+            if "B12101" in variables:
+                has_temperature = True
+            if "B01019" not in variables:
+                continue
+            name = variables["B01019"].get("v")
+            latitude = variables.get("B05001", {}).get("v")
+            longitude = variables.get("B06001", {}).get("v")
+        if not name:
+            continue
+        if has_temperature:
+            with_temperature.add(name)
+        observed_at = entry.get("date") or ""
+        current = stations.get(name)
+        if current is None or observed_at > current.get("_observed_at", ""):
+            stations[name] = {
+                "id": name,
+                "nome": name,
+                "latitudine": latitude,
+                "longitudine": longitude,
+                "_observed_at": observed_at,
+            }
+
+    # Brightness-only stations cannot feed the weather entity: offer the
+    # stations that actually report air temperature, unless none do.
+    meteo_stations = {
+        name: station for name, station in stations.items()
+        if name in with_temperature
+    }
+    if meteo_stations:
+        stations = meteo_stations
+
+    sorted_names = sorted(stations, key=_natural_key)
+    id_to_name = {name: name for name in sorted_names}
+    return id_to_name, {name: stations[name] for name in sorted_names}
+
+
+async def fetch_forecast_zones():
+    """Fetch the forecast zones of the newest ARPAE bulletin.
+
+    The bulletin's ``regionale.mappe`` maps one icon per zone; the zone label
+    in ``descrizione`` (e.g. ``FC-RA pianura``) is used as the human name.
+    """
+    url = f"{API_BASE}/meteo_bollettini/?sort=-_id&max_results=1"
+    async with aiohttp.ClientSession() as session, session.get(url) as response:
         response.raise_for_status()
         json_data = await response.json()
-        # Access the "data" key which contains the list of stations
-        data = json_data.get("data", [])
-        sorted_stations = sorted(data, key=lambda x: x["nome_stazione"])
-        id_to_name = {
-            entry["codseqst"]: f"{entry['nome_stazione']} ({entry['provincia'].title()})" for entry in sorted_stations
-        }
-        stations = {item["codseqst"]: item for item in sorted_stations}
 
-        return id_to_name, stations
+    items = json_data.get("_items") or []
+    if not items:
+        raise ValueError("Empty forecast bulletin")
+
+    bollettino = (items[0].get("oggi") or {}).get("bollettino") or {}
+    mappe = (bollettino.get("regionale") or {}).get("mappe") or {}
+    zones = {}
+    for slot in ("mattina", "pomeriggio", "sera_notte"):
+        for zone_id, zone_info in (mappe.get(slot) or {}).items():
+            if not str(zone_id).startswith("C"):
+                continue
+            description = (zone_info.get("descrizione") or "").strip()
+            if description:
+                zones.setdefault(zone_id, description)
+
+    if not zones:
+        raise ValueError("No forecast zones in the bulletin")
+    return dict(sorted(zones.items(), key=lambda item: _natural_key(item[0])))
+
+async def fetch_air_quality_stations():
+    """Fetch every air quality station from the observable ``qa_stazioni`` endpoint."""
+
+    # The endpoint defaults to 25 results: ask explicitly for the full list.
+    url = (
+        f"{API_BASE}/qa_stazioni"
+        "?projection=%7B%22foto%22%3A0%7D&max_results=1000"
+    )
+    async with aiohttp.ClientSession() as session, session.get(url) as response:
+        response.raise_for_status()
+        json_data = await response.json()
+    return json_data.get("_items", json_data.get("data", []))
+
+
+def _air_station_options(data, cod_parametro):
+    """Return the stations measuring a legacy parameter code.
+
+    Maps the legacy parameter codes (7=Ozone, 25=PM10, 39=PM2.5) to the actual
+    field names present in qa_stazioni ``dati[date]`` records.
+    """
+
+    param_field_map = {
+        "7": "o3mediaorariamax",   # Ozone
+        "25": "pm10",              # PM10
+        "39": "pm25",              # PM2.5
+    }
+    target_field = param_field_map.get(cod_parametro, cod_parametro)
+
+    filtered = []
+    for entry in data:
+        dati = entry.get("dati", {})
+        if not isinstance(dati, dict):
+            continue
+        # Check if any date's record has the target field with a non-empty value
+        for date_data in dati.values():
+            if isinstance(date_data, dict) and date_data.get(target_field):
+                filtered.append(entry)
+                break
+
+    sorted_stations = sorted(
+        filtered, key=lambda x: x.get("nome", x.get("nome_stazione", "")))
+    id_to_name = {
+        entry.get("_id", entry.get("id")):
+            f"{entry.get('nome', entry.get('nome_stazione'))} ({entry.get('provincia', '-')})"
+        for entry in sorted_stations
+    }
+    stations = {item.get("_id", item.get("id")): item for item in sorted_stations}
+    return id_to_name, stations
+
 
 async def fetch_stations_air(cod_parametro):
-    """Fetch the list of Ozone stations and their codes."""
-    async with aiohttp.ClientSession() as session, session.get(
-        f"{API_BASE}/aria_elenco_stazioni?cod_parametro={cod_parametro}"
-    ) as response:
-        response.raise_for_status()
-        json_data = await response.json()
-        # Access the "data" key which contains the list of stations
-        data = json_data.get("data", [])
-        sorted_stations = sorted(data, key=lambda x: x["RETE"] + x["NOME_STAZIONE"])
-        id_to_name = {
-            entry["CODSEQST"]: f"{entry['NOME_STAZIONE']} - {entry['RETE']}" for entry in sorted_stations
-        }
-        stations = {item["CODSEQST"]: item for item in sorted_stations}
+    """Fetch the stations measuring a legacy air quality parameter code."""
 
-        return id_to_name, stations
+    data = await fetch_air_quality_stations()
+    return _air_station_options(data, cod_parametro)
 
 
-class ArpaVenetoWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for ARPA Veneto Weather."""
+class ArpaEmiliaRomagnaWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for ARPA Emilia-Romagna Weather."""
 
     VERSION = 1
 
@@ -129,50 +228,103 @@ class ArpaVenetoWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry):
         """Implement OptionsFlow."""
-        return ArpaVenetoWeatherOptionsFlowHandler()
+        return ArpaEmiliaRomagnaWeatherOptionsFlowHandler()
 
-    async def async_step_user(self, user_input=None):
-        """Handle the first step: comune selection."""
+    async def async_step_reconfigure(self, user_input=None):
+        """Change the station and forecast zone of an existing entry."""
+        errors = {}
+        self.reconfiguring = self._get_reconfigure_entry()
+
         if user_input is not None:
-            # Save the selected comune ID and move to zone selection
-            self.selected_comune_id = user_input["comune_id"]
-            self.selected_comune_name = self.comune_id_to_name[self.selected_comune_id]
-            self.zone_id_to_name = await fetch_zone_names()
-            return await self.async_step_zone()
+            self.selected_station_id = user_input["station_id"]
+            self.selected_station_name = self.station_id_to_name[self.selected_station_id]
+            try:
+                self.zone_id_to_name = await fetch_forecast_zones()
+            except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+                _LOGGER.warning("Unable to fetch the forecast zones: %s", err)
+                errors["base"] = "cannot_connect"
+            else:
+                return await self.async_step_zone()
 
-        # Fetch zone data
-        self.comune_id_to_name, _, _ = await fetch_zones()
+        try:
+            self.station_id_to_name, self.stations = await fetch_stations()
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            _LOGGER.warning("Unable to fetch the meteo stations: %s", err)
+            errors["base"] = "cannot_connect"
+            self.station_id_to_name, self.stations = {}, {}
 
         schema = vol.Schema(
-            {vol.Required("comune_id"): vol.In(self.comune_id_to_name)}
+            {vol.Required("station_id"): vol.In(self.station_id_to_name)}
         )
 
-        return self.async_show_form(step_id="user", data_schema=schema)
+        return self.async_show_form(
+            step_id="reconfigure", data_schema=schema, errors=errors)
+
+    async def async_step_user(self, user_input=None):
+        """Handle the first step: meteo station selection."""
+        errors = {}
+        self.reconfiguring = None
+
+        if user_input is not None:
+            self.selected_station_id = user_input["station_id"]
+            self.selected_station_name = self.station_id_to_name[self.selected_station_id]
+            try:
+                self.zone_id_to_name = await fetch_forecast_zones()
+            except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+                _LOGGER.warning("Unable to fetch the forecast zones: %s", err)
+                errors["base"] = "cannot_connect"
+            else:
+                return await self.async_step_zone()
+
+        try:
+            self.station_id_to_name, self.stations = await fetch_stations()
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            _LOGGER.warning("Unable to fetch the meteo stations: %s", err)
+            errors["base"] = "cannot_connect"
+            self.station_id_to_name, self.stations = {}, {}
+
+        schema = vol.Schema(
+            {vol.Required("station_id"): vol.In(self.station_id_to_name)}
+        )
+
+        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
     async def async_step_zone(self, user_input=None):
-        """Handle the zone selection step."""
+        """Handle the forecast zone selection step."""
+        errors = {}
+
         if user_input is not None:
-            # Save the selected zone
-            self.selected_comune_id = user_input["comune_id"]
             self.selected_zone_id = user_input["zone_id"]
             self.selected_zone_name = self.zone_id_to_name[self.selected_zone_id]
 
-            # Proceed to station selection
-            return await self.async_step_station()
+            station = self.stations.get(self.selected_station_id, {})
+            data = {
+                "comune_id": self.selected_station_id,
+                "comune_name": self.selected_station_name,
+                "zone_id": self.selected_zone_id,
+                "zone_name": self.selected_zone_name,
+                "station_id": self.selected_station_id,
+                "station_name": self.selected_station_name,
+                "meteo_station_id": self.selected_station_id,
+                "meteo_station_name": self.selected_station_name,
+                "station_latitude": station.get("latitudine"),
+                "station_longitude": station.get("longitudine"),
+            }
+            if self.reconfiguring is not None:
+                return self.async_update_reload_and_abort(
+                    self.reconfiguring,
+                    title=f"Stazione di {self.selected_station_name}",
+                    data=data,
+                )
+            return self.async_create_entry(
+                title=f"Stazione di {self.selected_station_name}",
+                data=data,
+            )
 
-        # Fetch all available zones
-        _, id_to_zonaid, _ = await fetch_zones()
-
-        # Map comune_id to preselected zonaid
-        preselected_zonaid = id_to_zonaid[self.selected_comune_id]
-
-        # Prepopulate the dropdowns
+        default_zone = next(iter(self.zone_id_to_name), None)
         schema = vol.Schema(
             {
-                vol.Required("comune_id", default=self.selected_comune_id): vol.In(
-                    self.comune_id_to_name
-                ),
-                vol.Required("zone_id", default=preselected_zonaid): vol.In(
+                vol.Required("zone_id", default=default_zone): vol.In(
                     self.zone_id_to_name
                 ),
             }
@@ -181,49 +333,13 @@ class ArpaVenetoWeatherConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="zone",
             data_schema=schema,
+            errors=errors,
             description_placeholders={
-                "selected_comune": self.comune_id_to_name[self.selected_comune_id],
+                "selected_station": self.selected_station_name,
             },
         )
 
-    async def async_step_station(self, user_input=None):
-        """Handle the station selection step."""
-        if user_input is not None:
-            # Save the selected station
-            self.selected_station_id = user_input["station_id"]
-            self.selected_station_name = self.station_id_to_name[self.selected_station_id]
-            self.station_id_to_name[self.selected_station_id]
-
-            # Create the final entry
-            return self.async_create_entry(
-                title=f"{self.selected_comune_name} / Stazione di {self.selected_station_name} ",
-                data={
-                    "comune_id": self.selected_comune_id,
-                    "comune_name": self.selected_comune_name,
-                    "zone_id": self.selected_zone_id,
-                    "zone_name": self.selected_zone_name,
-                    "station_id": self.selected_station_id,
-                    "station_name": self.selected_station_name,
-                    "station_latitude": self.stations.get(self.selected_station_id).get("latitudine"),
-                    "station_longitude": self.stations.get(self.selected_station_id).get("longitudine"),
-                },
-            )
-
-        # Fetch all stations
-        self.station_id_to_name, self.stations = await fetch_stations()
-
-        schema = vol.Schema(
-            {
-                vol.Required("station_id"): vol.In(self.station_id_to_name),
-            }
-        )
-
-        return self.async_show_form(
-            step_id="station",
-            data_schema=schema,
-        )
-
-class ArpaVenetoWeatherOptionsFlowHandler(config_entries.OptionsFlow):
+class ArpaEmiliaRomagnaWeatherOptionsFlowHandler(config_entries.OptionsFlow):
     """Reconfigure integration options.
 
     Available options are:
@@ -254,9 +370,10 @@ class ArpaVenetoWeatherOptionsFlowHandler(config_entries.OptionsFlow):
                 # Fetch all stations
                 _, stations = await fetch_stations()
                 station_id = self.config_entry.data.get("station_id")
+                station = stations.get(station_id) or {}
                 new_data = {**self.config_entry.data,
-                            "station_latitude": stations.get(station_id).get("latitudine"),
-                            "station_longitude": stations.get(station_id).get("longitudine")
+                            "station_latitude": station.get("latitudine"),
+                            "station_longitude": station.get("longitudine")
                             }
                 self.hass.config_entries.async_update_entry(
                     self.config_entry,
@@ -266,13 +383,11 @@ class ArpaVenetoWeatherOptionsFlowHandler(config_entries.OptionsFlow):
 
             return self.async_create_entry(title="Configure options", data=user_input)
 
-        # Fetch air quality stations
-        ozone_stations_response = fetch_stations_air("7")  # Ozone parameter code
-        pm10_stations_response = fetch_stations_air("25")  # PM10 parameter code
-        pm25_stations_response = fetch_stations_air("39")  # PM2.5 parameter code
-        self.ozone_stations, _ = await ozone_stations_response
-        self.pm10_stations, _ = await pm10_stations_response
-        self.pm25_stations, _ = await pm25_stations_response
+        # Fetch air quality stations once and filter the three parameters locally
+        air_stations = await fetch_air_quality_stations()
+        self.ozone_stations, _ = _air_station_options(air_stations, "7")
+        self.pm10_stations, _ = _air_station_options(air_stations, "25")
+        self.pm25_stations, _ = _air_station_options(air_stations, "39")
 
         # Fetch the aerodromes issuing METAR around the station
         self.metar_stations = await self._async_metar_stations()
@@ -324,10 +439,11 @@ class ArpaVenetoWeatherOptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Optional(
                         CONF_DAY_CONDITION,
                         default=self.config_entry.options.get(
-                            CONF_DAY_CONDITION) or CONF_DAY_CONDITION_RADIATION
+                            CONF_DAY_CONDITION) or CONF_DAY_CONDITION_RADIATION_OR_FORECAST
                     ): selector.SelectSelector(
                         selector.SelectSelectorConfig(
                             options=[
+                                CONF_DAY_CONDITION_RADIATION_OR_FORECAST,
                                 CONF_DAY_CONDITION_RADIATION,
                                 CONF_DAY_CONDITION_RADIATION_OR_METAR,
                                 CONF_DAY_CONDITION_METAR,

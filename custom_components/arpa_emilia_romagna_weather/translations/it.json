@@ -1,24 +1,24 @@
 {
-    "title": "Meteo Arpa Veneto",
+    "title": "Meteo ARPA Emilia-Romagna",
     "config": {
         "step": {
             "user": {
-                "title": "Configura Meteo Arpa Veneto",
-                "description": "Scegli il comune per cercare la zona meteo da usare per le previsioni.",
+                "title": "Configura Meteo ARPA Emilia-Romagna",
+                "description": "Scegli la stazione meteo ARPAE per le condizioni attuali.",
                 "data": {
-                    "comune_id": "Comune"
+                    "station_id": "Stazione Meteo"
                 }
             },
             "zone": {
-                "title": "Seleziona Zona",
-                "description": "Scegli una zona meteo per le previsioni.",
+                "title": "Seleziona Zona Previsioni",
+                "description": "Scegli la zona del bollettino da usare per le previsioni di {selected_station}.",
                 "data": {
-                    "zone_id": "Zona"
+                    "zone_id": "Zona Previsioni"
                 }
             },
-            "station": {
-                "title": "Seleziona Stazione Meteo",
-                "description": "Scegli una stazione meteo per le condizioni meteo attuali.",
+            "reconfigure": {
+                "title": "Riconfigura Meteo ARPA Emilia-Romagna",
+                "description": "Scegli la stazione meteo ARPAE per le condizioni attuali.",
                 "data": {
                     "station_id": "Stazione Meteo"
                 }
@@ -35,7 +35,7 @@
                 "sections": {
                     "observations": {
                         "name": "Osservazioni aggiuntive",
-                        "description": "Le stazioni ARPAV non osservano lo stato del cielo, e alcune non riportano né visibilità né pressione. Gli aeroporti elencati qui sotto, dal più vicino, pubblicano un'osservazione METAR ogni 30 minuti e possono completare i dati mancanti. Tieni presente che un aeroporto distante descrive bene il cielo in generale e male la nebbia o le nuvole basse locali.",
+                        "description": "Le stazioni ARPAE non osservano lo stato del cielo, e alcune non riportano né visibilità né pressione. Gli aeroporti elencati qui sotto, dal più vicino, pubblicano un'osservazione METAR ogni 30 minuti e possono completare i dati mancanti. Tieni presente che un aeroporto distante descrive bene il cielo in generale e male la nebbia o le nuvole basse locali.",
                         "data": {
                             "metar_station": "Aeroporto che pubblica METAR",
                             "metar_fill_missing": "Usalo per i dati che la stazione non fornisce"
@@ -91,6 +91,7 @@
         "day_condition": {
             "options": {
                 "day_condition_radiation": "Solo radiazione solare",
+                "day_condition_radiation_or_forecast": "Radiazione solare, bollettino di previsione come ripiego",
                 "day_condition_radiation_or_metar": "Radiazione solare, osservazione METAR come ripiego",
                 "day_condition_metar": "Osservazione METAR, previsione come ripiego",
                 "day_condition_forecast": "Bollettino di previsione",
@@ -119,7 +120,7 @@
                 "name": "Visibilità a {station_name}"
             },
             "precipitation": {
-                "name": "Precipitazioni ultimi 5 minuti  a {station_name}"
+                "name": "Precipitazioni (ultimo intervallo) a {station_name}"
             },
             "precipitation_probability": {
                 "name": "Probabilità di precipitazione a {station_name}"
@@ -162,7 +163,7 @@
             }
         },
         "weather": {
-            "arpav": {
+            "arpae": {
                 "name": "Situazione a {station_name} - previsioni per {comune_name}"
             }
         }
