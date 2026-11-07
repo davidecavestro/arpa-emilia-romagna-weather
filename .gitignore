@@ -166,3 +166,6 @@ custom_components/.DS_Store
 
 *.bak
 requirements_all.txt
+
+.secrets/*
+!.secrets/.gitkeep

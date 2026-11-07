@@ -1,0 +1,3 @@
+# Unversioned: tracked so the directory is preserved in git history.
+# Real contents (SSH keys, tokens, etc.) are gitignored and mounted readonly
+# by the devcontainer in .devcontainer.json.

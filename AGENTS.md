@@ -60,7 +60,24 @@ Tests use `pytest`. Name tests `test_<behavior>` and keep fixtures or builders l
 
 ## Commit & Pull Request Guidelines
 
-Use concise imperative commit subjects, for example `Add alert severity parser tests`. Pull requests should describe the behavior change, list validation commands, and call out Home Assistant configuration or entity changes. Include screenshots only when sensor presentation or dashboard examples change.
+Adopt [Conventional Commits](https://www.conventionalcommits.org/) (also known as semantic commits):
+
+```
+<scope>(<type>): <description>
+
+<optional detailed description>
+```
+
+`<scope>` describes the code area and is one of: `meteo`, `station`, `forecast`,
+`config`, `sensor`, `integration`, `provenance`, `test`, `hass`. `<type>` is
+`feat`, `fix`, `refactor`, `docs`, `test`, or `chore`. The `<description>` stays
+imperative mood and briefly states what changed, e.g. `meteo: load meteo_osservati
+stations in the config flow`. If the change affects user-visible behavior, pass a
+PR describing the behavior change, list validation commands, and call out Home
+Assistant configuration or entity changes; include screenshots only when sensor
+presentation or dashboard examples change.
+
+Existing commits were made without the prefix because they predated this rule.
 
 ## Security & Configuration Tips
 
