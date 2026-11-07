@@ -1,5 +1,4 @@
 # ARPA Emilia-Romagna Weather integration for Home Assistant
-
 Home Assistant unofficial integration for ARPA Emilia-Romagna (ARPAE) realtime weather and forecast data.
 
 [![GitHub Release][releases-shield]][releases]
