@@ -230,8 +230,8 @@ def _parse_observation(report):
     bearing = report.get("wdir")
     # a variable wind direction is reported as VRB and has no bearing
     if isinstance(bearing, (int, float)):
-        values["native_wind_bearing"] = int(bearing)
-        values["wind_bearing"] = CARDINAL_DIRECTIONS[int((int(bearing) + 11.25) / 22.5)]
+        values["wind_bearing"] = int(bearing)
+        values["wind_direction"] = CARDINAL_DIRECTIONS[int((int(bearing) + 11.25) / 22.5)]
 
     return MetarObservation(
         icao=report.get("icaoId"),

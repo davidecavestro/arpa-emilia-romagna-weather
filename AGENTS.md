@@ -86,6 +86,7 @@ When guessing is necessary (e.g., adapting from a different region), state it ex
 Verified observable endpoints at time of writing:
 - `https://apps.arpae.it/REST/meteo_bollettini/?sort=-_id&max_results=1` (forecast bulletin; observable via beelzetron repo and ARPAE dataset pages)
 - `https://apps.arpae.it/REST/qa_stazioni` (air quality stations; observable via gist and dataset pages)
+- `https://apps.arpae.it/REST/meteo_osservati/` (station dataset behind the official "grafici per stazione" page; also lists consortium/third-party stations missing from the realtime feed)
 - `https://dati-simc.arpae.it/opendata/osservati/meteo/realtime/realtime.jsonl` (realtime JSONL; observable via open-data portal resource page)
 - `https://allertameteo.regione.emilia-romagna.it/o/get-stato-allerta` (alert state; observable via developer docs page)
 

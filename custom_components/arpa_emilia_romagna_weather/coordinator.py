@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 import aiohttp
 from . import const
 from .const import (
-    API_BASE, CARDINAL_DIRECTIONS, DOMAIN, REALTIME_URL
+    API_BASE, CARDINAL_DIRECTIONS, DOMAIN, METEO_OSSERVATI_URL, REALTIME_URL
 )
 
 from . import metar
@@ -223,47 +223,28 @@ class ArpaEmiliaRomagnaDataUpdateCoordinator(DataUpdateCoordinator):
         target = str(station_id or "").strip().lower()
         configured_name = str(self.station_name or "").strip().lower()
 
-        def station_name(entry):
-            """Return the B01019 station name of a snapshot, lower-cased."""
-            meta = _station_meta(entry)
-            return (meta[0] or "").strip().lower() if meta else ""
+        matches = _match_station_snapshots(entries, target, configured_name)
 
-        matches = [entry for entry in entries if target and station_name(entry) == target]
-        if not matches and configured_name:
-            matches = [entry for entry in entries if station_name(entry) == configured_name]
-        if not matches and target:
-            matches = [entry for entry in entries if target in station_name(entry)]
-        if not matches and configured_name:
-            matches = [entry for entry in entries if configured_name in station_name(entry)]
-
-        # Entries created before the station list was exposed may hold a name
-        # with qualifiers, e.g. "ALBARETO (MODENA)": match on the significant
-        # words as a last reasonable guess before giving up.
+        # Stations owned by the consortia and by other third parties are not
+        # part of the realtime JSONL feed; the meteo_osservati dataset behind
+        # the official "grafici per stazione" page publishes them. Ask it
+        # before falling back to a nearby realtime station, which would
+        # otherwise hide the station the user actually selected.
         if not matches:
-            tokens = [
-                token for token in re.split(r"[^a-z0-9]+", configured_name or target)
-                if len(token) > 3
-            ]
-            if tokens:
-                matches = [
-                    entry for entry in entries
-                    if any(token in station_name(entry) for token in tokens)
-                ]
+            candidate = self.meteo_station_id or self.station_name or station_id
+            if candidate:
+                meteo_station = await _fetch_meteo_osservati_station(candidate)
+                if meteo_station is not None:
+                    return _extract_meteo_osservati(meteo_station)
 
         # Entries created before the station list was exposed may hold an
         # unrelated id: fall back to the station nearest to the configured
         # coordinates, if any.
-        if not matches and self.latitude is not None and self.longitude is not None:
-            candidates = []
-            for entry in entries:
-                meta = _station_meta(entry)
-                if not meta or meta[1] is None or meta[2] is None:
-                    continue
-                codes = _latest_measurements(entry)
-                distance = haversine(meta[1], meta[2], self.latitude, self.longitude)
-                candidates.append(("B12101" not in codes, distance, entry))
-            if candidates:
-                matches = [min(candidates, key=lambda item: (item[0], item[1]))[2]]
+        if not matches:
+            nearest = _nearest_station_snapshot(
+                entries, self.latitude, self.longitude)
+            if nearest is not None:
+                matches = [nearest]
 
         if not matches:
             raise UpdateFailed(
@@ -295,12 +276,21 @@ class ArpaEmiliaRomagnaDataUpdateCoordinator(DataUpdateCoordinator):
             else (round(precipitation_15m * 4, 2)
                   if precipitation_15m is not None else None))
 
+        # UV index (B22070, B22071, B22073, B22074) and leaf wetness (B22196)
+        # are published by some stations; extract them when present.
+        uv_index = None
+        for uv_code in ("B22070", "B22071", "B22073", "B22074"):
+            if uv_code in measurements:
+                uv_index = measurements[uv_code]
+                break
+        leaf_wetness = _as_float(measurements.get("B22196"))
+
         extracted_data = {
             "temperature": round(temperature_k - 273.15, 2) if temperature_k is not None else None,
             "humidity": _as_float(measurements.get("B13003")),
             "wind_speed": round(wind_ms * 3.6, 2) if wind_ms is not None else None,
-            "wind_bearing": _cardinal(wind_degrees),
-            "native_wind_bearing": wind_degrees,
+            "wind_bearing": wind_degrees,
+            "wind_direction": _cardinal(wind_degrees),
             "visibility": _as_float(measurements.get("B22032")),
             "pressure": round(pressure_pa / 100, 2) if pressure_pa is not None else None,
             "brightness": _as_float(measurements.get("B07030")),
@@ -309,6 +299,8 @@ class ArpaEmiliaRomagnaDataUpdateCoordinator(DataUpdateCoordinator):
             "precipitation_cumulative_1h": precipitation_1h,
             "wind_gust": (round(_as_float(measurements["B11041"]) * 3.6, 2)
                           if _as_float(measurements.get("B11041")) is not None else None),
+            "uv_index": _as_float(uv_index),
+            "leaf_wetness": leaf_wetness,
         }
 
         # Temperature extremes over the snapshots published for this station.
@@ -334,6 +326,10 @@ class ArpaEmiliaRomagnaDataUpdateCoordinator(DataUpdateCoordinator):
             extracted_data["measured_temperature_extremes"] = {
                 "date": latest_day, "min": min(values), "max": max(values)}
 
+        # Rolling 15-minute samples; sum consecutive ones to get exact window totals.
+        # Only populated when enough samples are available so a gap never understates the value.
+        extracted_data.update(_realtime_precipitation_cumulatives(matches))
+
         extracted_data["last_update"] = datetime.now().isoformat()
         extracted_data["dt"] = _arpae_isoformat(observed_at)
         extracted_data["station_name"] = meta_name
@@ -346,7 +342,8 @@ class ArpaEmiliaRomagnaDataUpdateCoordinator(DataUpdateCoordinator):
 
         sources = {}
         for key in ("temperature", "humidity", "wind_speed", "wind_bearing",
-                    "visibility", "pressure", "precipitation"):
+                    "wind_direction", "visibility", "pressure", "precipitation",
+                    "uv_index", "leaf_wetness"):
             sources[key] = Provenance(
                 source=const.SOURCE_STATION,
                 name=meta_name,
@@ -358,6 +355,16 @@ class ArpaEmiliaRomagnaDataUpdateCoordinator(DataUpdateCoordinator):
             observed_at=_arpae_isoformat(observed_at),
             rule=const.RULE_SKY_BRIGHTNESS,
         )
+
+        # Some stations are published by both datasets, but report their air
+        # temperature only through meteo_osservati. Fill whatever the realtime
+        # snapshot lacks, without discarding the values it does provide.
+        if extracted_data.get("temperature") is None:
+            candidate = self.meteo_station_id or self.station_name or meta_name or station_id
+            if candidate:
+                meteo_station = await _fetch_meteo_osservati_station(candidate)
+                if meteo_station is not None:
+                    _fill_from_meteo_osservati(extracted_data, sources, meteo_station)
 
         # raw entries for debug / exposure
         sensor_data_raw = [item for item in latest.get("data", []) if item.get("vars")]
@@ -764,6 +771,25 @@ async def _fetch_air_quality_station(station_id):
     return items[0] if items else None
 
 
+async def _fetch_meteo_osservati_station(name):
+    """Return one ``meteo_osservati`` record by station name, or None.
+
+    This is the dataset behind the official ARPAE "grafici per stazione" page.
+    It lists the stations of the regional network together with the ones owned
+    by consortia and other third parties, which the realtime JSONL feed omits.
+    """
+
+    where = quote(json.dumps({"anagrafica.nome": str(name)}))
+    url = f"{METEO_OSSERVATI_URL}?where={where}&max_results=1"
+    async with aiohttp.ClientSession() as session, session.get(url) as response:
+        if response.status != 200:
+            return None
+        data = await response.json()
+
+    items = data.get("_items") or []
+    return items[0] if items else None
+
+
 # Default bulletin zone for a province: plain/coast unless the user chooses a
 # different (e.g. mountain) zone afterwards via Reconfigure.
 _ZONE_FOR_PROVINCE = {
@@ -926,6 +952,57 @@ def _station_meta(entry):
     return None
 
 
+def _match_station_snapshots(entries, target, configured_name):
+    """Return the realtime snapshots whose station name matches the target."""
+
+    def station_name(entry):
+        """Return the B01019 station name of a snapshot, lower-cased."""
+        meta = _station_meta(entry)
+        return (meta[0] or "").strip().lower() if meta else ""
+
+    matches = [entry for entry in entries if target and station_name(entry) == target]
+    if not matches and configured_name:
+        matches = [entry for entry in entries if station_name(entry) == configured_name]
+    if not matches and target:
+        matches = [entry for entry in entries if target in station_name(entry)]
+    if not matches and configured_name:
+        matches = [entry for entry in entries if configured_name in station_name(entry)]
+
+    # Entries created before the station list was exposed may hold a name
+    # with qualifiers, e.g. "ALBARETO (MODENA)": match on the significant
+    # words as a last reasonable guess before giving up.
+    if not matches:
+        tokens = [
+            token for token in re.split(r"[^a-z0-9]+", configured_name or target)
+            if len(token) > 3
+        ]
+        if tokens:
+            matches = [
+                entry for entry in entries
+                if any(token in station_name(entry) for token in tokens)
+            ]
+    return matches
+
+
+def _nearest_station_snapshot(entries, latitude, longitude):
+    """Return the nearest snapshot reporting temperature, or the nearest one."""
+
+    if latitude is None or longitude is None:
+        return None
+
+    candidates = []
+    for entry in entries:
+        meta = _station_meta(entry)
+        if not meta or meta[1] is None or meta[2] is None:
+            continue
+        codes = _latest_measurements(entry)
+        distance = haversine(meta[1], meta[2], latitude, longitude)
+        candidates.append(("B12101" not in codes, distance, entry))
+    if not candidates:
+        return None
+    return min(candidates, key=lambda item: (item[0], item[1]))[2]
+
+
 def _latest_measurements(entry):
     """Merge the B-codes of all observations of a snapshot; later values win."""
 
@@ -945,10 +1022,49 @@ def _measurement_for_period(entry, code, period):
         payload = (item.get("vars") or {}).get(code)
         if not isinstance(payload, dict) or "v" not in payload:
             continue
-        timerange = payload.get("timerange") or []
+        timerange = item.get("timerange") or []
         if len(timerange) >= 3 and timerange[2] == period:
             value = payload["v"]
     return value
+
+
+def _realtime_precipitation_cumulatives(matches):
+    """Return cumulative rainfall over 3 and 6 hours from realtime snapshots.
+
+    The realtime feed publishes a rolling 15-minute accumulation (``B13011``
+    with a 900-second timerange) for every station and keeps a few hours of
+    snapshots. Summing consecutive 15-minute values yields exact window
+    totals; a window is only returned when every sample it needs is present,
+    so a data gap never understates the value.
+    """
+
+    samples = {}
+    for entry in matches:
+        try:
+            observed_at = datetime.fromisoformat(
+                str(entry.get("date")).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        value = _as_float(_measurement_for_period(entry, "B13011", 900))
+        if value is not None:
+            samples[observed_at] = value
+
+    if not samples:
+        return {}
+
+    latest = max(samples)
+    result = {}
+    for hours, key in (
+            (3, "precipitation_cumulative_3h"),
+            (6, "precipitation_cumulative_6h")):
+        expected = [
+            latest - timedelta(minutes=15 * offset)
+            for offset in range(hours * 4)
+        ]
+        if all(sample in samples for sample in expected):
+            result[key] = round(
+                sum(samples[sample] for sample in expected), 2)
+    return result
 
 
 def _as_float(value):
@@ -970,53 +1086,281 @@ def _cardinal(degrees):
     return CARDINAL_DIRECTIONS[int((degrees + 11.25) / 22.5) % len(CARDINAL_DIRECTIONS)]
 
 
+def _meteo_osservati_latest_slot(station):
+    """Return ``(observed_at, values)`` of the newest non-empty slot.
+
+    ``meteo_osservati`` groups its values by UTC day (``YYYYMMDD``) and hour
+    (``HHMM``); the official widget parses those keys with ``dayjs.utc``. Empty
+    trailing slots are common, so they are skipped rather than reported as the
+    latest observation.
+    """
+
+    latest = None
+    for day, slots in (station.get("dati") or {}).items():
+        if not isinstance(slots, dict):
+            continue
+        for time_key, values in slots.items():
+            if not isinstance(values, dict):
+                continue
+            if all(value is None for value in values.values()):
+                continue
+            try:
+                observed_at = datetime.strptime(
+                    f"{day}{time_key}", "%Y%m%d%H%M").replace(tzinfo=UTC)
+            except (TypeError, ValueError):
+                continue
+            if latest is None or observed_at > latest[0]:
+                latest = (observed_at, values)
+    return latest if latest is not None else (None, {})
+
+
+def _meteo_osservati_temperatures(station):
+    """Return ``{day: [temperatures]}`` of a ``meteo_osservati`` record."""
+
+    by_day = {}
+    for day, slots in (station.get("dati") or {}).items():
+        if not isinstance(slots, dict):
+            continue
+        for values in slots.values():
+            if not isinstance(values, dict):
+                continue
+            temperature = _as_float(values.get("temperatura_istantanea_2m"))
+            if temperature is None:
+                continue
+            by_day.setdefault(str(day), []).append(temperature)
+    return by_day
+
+
+def _meteo_osservati_precipitation_cumulatives(station):
+    """Return cumulative rainfall over 3, 6, 12, 24 hours and today.
+
+    ``precipitazione_cumulata_1h`` is a rolling one-hour total, so the value
+    published at the top of each hour is exactly the rainfall of the previous
+    hour. Summing consecutive hourly values therefore gives the window total
+    without double counting. A window is only returned when every hourly value
+    it needs is present; missing data leaves the sensor unknown instead of
+    understating the rainfall. "Today" follows the Italian local day, so it
+    also works across the daylight-saving change.
+    """
+
+    samples = {}
+    for day, slots in (station.get("dati") or {}).items():
+        if not isinstance(slots, dict):
+            continue
+        for time_key, values in slots.items():
+            if not isinstance(values, dict):
+                continue
+            value = _as_float(values.get("precipitazione_cumulata_1h"))
+            if value is None:
+                continue
+            try:
+                observed_at = datetime.strptime(
+                    f"{day}{time_key}", "%Y%m%d%H%M").replace(tzinfo=UTC)
+            except (TypeError, ValueError):
+                continue
+            if observed_at.minute:
+                continue
+            samples[observed_at] = value
+
+    if not samples:
+        return {}
+
+    latest = max(samples)
+    result = {}
+    for hours, key in (
+            (3, "precipitation_cumulative_3h"),
+            (6, "precipitation_cumulative_6h"),
+            (12, "precipitation_cumulative_12h"),
+            (24, "precipitation_cumulative_24h")):
+        expected = [
+            latest - timedelta(hours=offset)
+            for offset in range(hours)
+        ]
+        if all(sample in samples for sample in expected):
+            result[key] = round(
+                sum(samples[sample] for sample in expected), 2)
+
+    local_latest = latest.astimezone(ZoneInfo("Europe/Rome"))
+    midnight = local_latest.replace(hour=0, minute=0, second=0, microsecond=0)
+    expected = []
+    cursor = midnight + timedelta(hours=1)
+    while cursor <= local_latest:
+        expected.append(cursor.astimezone(UTC))
+        cursor += timedelta(hours=1)
+    if expected and all(sample in samples for sample in expected):
+        result["precipitation_cumulative_today"] = round(
+            sum(samples[sample] for sample in expected), 2)
+    elif not expected and local_latest.hour == 0:
+        # The sample at local midnight covers the previous day's last hour.
+        result["precipitation_cumulative_today"] = 0.0
+    return result
+
+
+def _extract_meteo_osservati(station):
+    """Map a ``meteo_osservati`` record to the coordinator values.
+
+    The dataset publishes the same measurements as the realtime feed, but with
+    descriptive names instead of WMO B-codes, and in the units documented by
+    the official widget: °C, %, m/s, °, mm, hPa and W/m². Values the dataset
+    does not measure are left as None, so the sensors stay ``unknown`` instead
+    of inventing a reading.
+    """
+
+    anagrafica = station.get("anagrafica") or {}
+    name = (anagrafica.get("nome") or station.get("_id") or "").strip() or None
+
+    # GeoJSON coordinates are longitude first.
+    coordinates = (anagrafica.get("geometry") or {}).get("coordinates") or []
+    longitude = latitude = None
+    if len(coordinates) >= 2:
+        longitude, latitude = coordinates[0], coordinates[1]
+
+    observed_at, values = _meteo_osservati_latest_slot(station)
+
+    wind_ms = _as_float(values.get("velocita_vento_istantanea_10m"))
+    wind_degrees = _as_float(values.get("direzione_vento_istantanea_10m"))
+    precipitation_1h = _as_float(values.get("precipitazione_cumulata_1h"))
+    radiation = _as_float(values.get("radiazione_media_oraria_alto"))
+
+    extracted_data = {
+        "temperature": _as_float(values.get("temperatura_istantanea_2m")),
+        "humidity": _as_float(values.get("umidita_istantanea_2m")),
+        "wind_speed": round(wind_ms * 3.6, 2) if wind_ms is not None else None,
+        "wind_bearing": wind_degrees,
+        "wind_direction": _cardinal(wind_degrees),
+        "visibility": None,
+        "pressure": _as_float(values.get("pressione_atmosferica")),
+        "brightness": None,
+        # The dataset publishes an hourly accumulation, which is also the last
+        # available interval and the average intensity over that hour.
+        "precipitation": precipitation_1h,
+        "precipitation_hourly": precipitation_1h,
+        "precipitation_cumulative_1h": precipitation_1h,
+        "wind_gust": None,
+        "uv_index": None,
+        "leaf_wetness": None,
+        # Mean global radiation over the hour, in W/m²: the same quantity the
+        # condition computation expects as GHI.
+        "ghi": radiation,
+    }
+    extracted_data.update(_meteo_osservati_precipitation_cumulatives(station))
+
+    temperatures_by_day = _meteo_osservati_temperatures(station)
+    if temperatures_by_day:
+        latest_day = max(temperatures_by_day)
+        latest_values = temperatures_by_day[latest_day]
+        extracted_data["measured_temperature_extremes"] = {
+            "date": f"{latest_day[:4]}-{latest_day[4:6]}-{latest_day[6:8]}",
+            "min": min(latest_values),
+            "max": max(latest_values),
+        }
+        if observed_at is not None:
+            observed_day = observed_at.strftime("%Y%m%d")
+            day_values = temperatures_by_day.get(observed_day, latest_values)
+            extracted_data["temperature_extremes"] = {
+                "min": min(day_values), "max": max(day_values)}
+
+    extracted_data["last_update"] = datetime.now().isoformat()
+    extracted_data["dt"] = observed_at.isoformat() if observed_at else None
+    extracted_data["station_name"] = name
+    extracted_data["latitude"] = latitude
+    extracted_data["longitude"] = longitude
+
+    observed_iso = observed_at.isoformat() if observed_at else None
+    sources = {}
+    for key in ("temperature", "humidity", "wind_speed", "wind_bearing",
+                "wind_direction", "visibility", "pressure", "precipitation",
+                "precipitation_cumulative_1h", "precipitation_cumulative_3h",
+                "precipitation_cumulative_6h", "precipitation_cumulative_12h",
+                "precipitation_cumulative_24h", "precipitation_cumulative_today",
+                "uv_index", "leaf_wetness", "ghi"):
+        sources[key] = Provenance(
+            source=const.SOURCE_STATION,
+            name=name,
+            observed_at=observed_iso,
+            rule=const.RULE_SOLAR_RADIATION if key == "ghi" else None,
+        )
+
+    # Raw values for debug / exposure, in the same shape as the realtime feed.
+    sensor_data_raw = [
+        {"vars": {variable: {"v": value}}}
+        for variable, value in values.items()
+    ]
+    return extracted_data, sensor_data_raw, sources
+
+
+def _fill_from_meteo_osservati(extracted_data, sources, station):
+    """Complete a realtime snapshot with the values only meteo_osservati has.
+
+    A handful of stations are present in both datasets but publish their air
+    temperature only through meteo_osservati. The realtime values are kept as
+    they are; only the missing ones are taken from the other dataset, along
+    with their provenance.
+    """
+
+    meteo_data, _, meteo_sources = _extract_meteo_osservati(station)
+    for key in (
+            "temperature", "humidity", "wind_speed", "wind_bearing",
+            "wind_direction", "visibility", "pressure", "precipitation",
+            "precipitation_hourly", "precipitation_cumulative_1h",
+            "uv_index", "leaf_wetness", "ghi"):
+        if extracted_data.get(key) is None and meteo_data.get(key) is not None:
+            extracted_data[key] = meteo_data[key]
+            if key in meteo_sources:
+                sources[key] = meteo_sources[key]
+
+    for key in ("temperature_extremes", "measured_temperature_extremes"):
+        if key not in extracted_data and meteo_data.get(key) is not None:
+            extracted_data[key] = meteo_data[key]
+
+
 def _values_from_observation(entry):
     """Map a single realtime JSONL observation (with B-codes) to the sensor values it feeds."""
     # Extract vars dict from the data entry
     vars_dict = entry.get("vars", {})
-    
+
     result = {}
-    
+
     # Station name
     if "B01019" in vars_dict:
         result["station_name"] = str(vars_dict["B01019"].get("v", ""))
-    
+
     # Latitude (in 10000ths of a degree)
     if "B05001" in vars_dict:
         result["latitude"] = float(vars_dict["B05001"].get("v", 0)) / 10000.0
-    
+
     # Longitude (in 10000ths of a degree)
     if "B06001" in vars_dict:
         result["longitude"] = float(vars_dict["B06001"].get("v", 0)) / 10000.0
-    
+
     # Temperature (in Kelvin)
     if "B12101" in vars_dict:
         result["temperature"] = float(vars_dict["B12101"].get("v", 0))
-    
+
     # Humidity (percentage)
     if "B13003" in vars_dict:
         result["humidity"] = int(vars_dict["B13003"].get("v", 0))
-    
+
     # Precipitation (mm)
     if "B13011" in vars_dict:
         result["precipitation"] = float(vars_dict["B13011"].get("v", 0))
-    
+
     # Wind speed (m/s)
     if "B22062" in vars_dict:
         result["wind_speed"] = float(vars_dict["B22062"].get("v", 0))
-    
+
     # Wind direction (degrees)
     if "B22001" in vars_dict:
         result["wind_bearing"] = int(vars_dict["B22001"].get("v", 0))
-    
+
     # Pressure (Pa)
     if "B10004" in vars_dict:
         result["pressure"] = float(vars_dict["B10004"].get("v", 0))
-    
+
     # Visibility (km)
     if "B22032" in vars_dict:
         result["visibility"] = float(vars_dict["B22032"].get("v", 0))
-    
+
     # UV Index
     if "B22070" in vars_dict:
         result["uv_index"] = int(vars_dict["B22070"].get("v", 0))
@@ -1026,15 +1370,15 @@ def _values_from_observation(entry):
         result["uv_index"] = int(vars_dict["B22073"].get("v", 0))
     elif "B22074" in vars_dict:
         result["uv_index"] = int(vars_dict["B22074"].get("v", 0))
-    
+
     # Leaf wetness (%)
     if "B22196" in vars_dict:
         result["leaf_wetness"] = float(vars_dict["B22196"].get("v", 0))
-    
+
     # Precipitation rate (mm/h)
     if "B14198" in vars_dict:
         result["precipitation_rate"] = float(vars_dict["B14198"].get("v", 0))
-    
+
     # Date/time components
     if "B04001" in vars_dict:
         result["year"] = int(vars_dict["B04001"].get("v", 0))
@@ -1048,13 +1392,13 @@ def _values_from_observation(entry):
         result["minute"] = int(vars_dict["B04005"].get("v", 0))
     if "B04006" in vars_dict:
         result["second"] = int(vars_dict["B04006"].get("v", 0))
-    
+
     # Brightness values
     if "B07030" in vars_dict:
         result["brightness"] = float(vars_dict["B07030"].get("v", 0))
     if "B07031" in vars_dict:
         result["brightness_secondary"] = float(vars_dict["B07031"].get("v", 0))
-    
+
     return result
 
 

@@ -11,6 +11,12 @@ API_BASE = "https://apps.arpae.it/REST"
 # per line. It must be read as text, never through a JSON parser on the whole body.
 REALTIME_URL = "https://dati-simc.arpae.it/opendata/osservati/meteo/realtime/realtime.jsonl"
 
+# Verified station dataset behind the official ARPAE "grafici per stazione"
+# page. Unlike the realtime feed it also includes stations owned by consortia
+# and other third parties. Times in ``dati`` are UTC, coordinates are GeoJSON
+# (longitude first), and the units are the ones documented by the widget JS.
+METEO_OSSERVATI_URL = f"{API_BASE}/meteo_osservati/"
+
 CONF_EXPOSE_FORECAST_JSON = "expose_forecast_json"
 CONF_EXPOSE_FORECAST_RAW = "expose_forecast_raw"
 CONF_EXPOSE_SENSORS_RAW = "expose_sensors_raw"
@@ -155,6 +161,14 @@ SENSOR_TYPES = {
     },
     "wind_bearing": {
         "name": "Wind bearing",
+        "unit": "°",
+        "device_class": "wind_direction",
+        "state_class": "measurement",
+    },
+    "wind_direction": {
+        "name": "Wind direction",
+        "device_class": "wind_direction",
+        "state_class": "measurement",
     },
     "wind_speed": {
         "name": "Wind speed",

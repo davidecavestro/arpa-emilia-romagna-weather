@@ -2,6 +2,7 @@
 import json
 import logging
 import re
+from urllib.parse import quote
 
 import aiohttp
 import voluptuous as vol
@@ -12,6 +13,7 @@ from homeassistant.helpers import selector
 from .const import (
     DOMAIN,
     API_BASE,
+    METEO_OSSERVATI_URL,
     REALTIME_URL,
     CONF_EXPOSE_FORECAST_JSON,
     CONF_EXPOSE_FORECAST_RAW,
@@ -82,10 +84,14 @@ async def _fetch_realtime_entries():
 
 
 async def fetch_stations():
-    """Fetch the meteo stations from the verified realtime JSONL endpoint.
+    """Fetch the meteo stations from the verified realtime endpoint.
 
     The station name from ``B01019`` is used as id: it is stable, human
     readable, and it is what the coordinator matches against the feed.
+
+    The realtime feed only covers part of the regional network: stations owned
+    by consortia and other third parties are published by the observable
+    ``meteo_osservati`` dataset instead, so both lists are merged here.
     """
     entries = await _fetch_realtime_entries()
 
@@ -118,6 +124,40 @@ async def fetch_stations():
                 "_observed_at": observed_at,
             }
 
+    # Third-party stations are missing from the realtime feed; the official
+    # "grafici per stazione" page serves them from meteo_osservati.
+    try:
+        extra_stations = await _fetch_meteo_osservati_stations()
+    except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+        _LOGGER.warning("Unable to fetch the meteo_osservati stations: %s", err)
+        extra_stations = []
+
+    extra_by_name = {}
+    for item in extra_stations:
+        station = _station_from_meteo_osservati(item)
+        if station is not None:
+            extra_by_name[station["nome"].lower()] = station
+
+    known_names = {name.lower() for name in stations}
+    for name, station in stations.items():
+        extra = extra_by_name.get(name.lower())
+        if extra is None:
+            continue
+        # The station exists in both datasets and reports its temperature only
+        # through meteo_osservati: it is still usable by the weather entity.
+        with_temperature.add(name)
+        if station.get("latitudine") is None:
+            station["latitudine"] = extra.get("latitudine")
+        if station.get("longitudine") is None:
+            station["longitudine"] = extra.get("longitudine")
+
+    for extra in extra_by_name.values():
+        if extra["nome"].lower() in known_names:
+            continue
+        stations[extra["id"]] = {**extra, "_observed_at": ""}
+        with_temperature.add(extra["id"])
+        known_names.add(extra["nome"].lower())
+
     # Brightness-only stations cannot feed the weather entity: offer the
     # stations that actually report air temperature, unless none do.
     meteo_stations = {
@@ -130,6 +170,45 @@ async def fetch_stations():
     sorted_names = sorted(stations, key=_natural_key)
     id_to_name = {name: name for name in sorted_names}
     return id_to_name, {name: stations[name] for name in sorted_names}
+
+
+async def _fetch_meteo_osservati_stations():
+    """Return every station record of the observable ``meteo_osservati`` dataset."""
+
+    projection = quote(json.dumps({"dati": 0}))
+    url = f"{METEO_OSSERVATI_URL}?projection={projection}&max_results=1000"
+    async with aiohttp.ClientSession() as session, session.get(url) as response:
+        response.raise_for_status()
+        json_data = await response.json()
+    return json_data.get("_items") or []
+
+
+def _station_from_meteo_osservati(item):
+    """Return a station record when a ``meteo_osservati`` item has a temperature.
+
+    The weather entity needs at least the air temperature, so stations that only
+    report hydrology or brightness are not offered, mirroring the filter
+    applied to the realtime feed.
+    """
+
+    anagrafica = item.get("anagrafica") or {}
+    name = (anagrafica.get("nome") or "").strip()
+    if not name:
+        return None
+    if "temperatura_istantanea_2m" not in (anagrafica.get("variabili") or []):
+        return None
+
+    coordinates = (anagrafica.get("geometry") or {}).get("coordinates") or []
+    longitude = latitude = None
+    if len(coordinates) >= 2:
+        longitude, latitude = coordinates[0], coordinates[1]
+
+    return {
+        "id": name,
+        "nome": name,
+        "latitudine": latitude,
+        "longitudine": longitude,
+    }
 
 
 async def fetch_forecast_zones():

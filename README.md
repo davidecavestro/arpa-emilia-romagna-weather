@@ -2,15 +2,19 @@
 
 Home Assistant unofficial integration for ARPA Emilia-Romagna (ARPAE) realtime weather and forecast data.
 
-This is a fork/clone of the original **Arpa Veneto Weather** integration by **davidecavestro**, adapted for ARPA Emilia-Romagna (ARPAE) data sources.
-
 [![GitHub Release][releases-shield]][releases]
 [![GitHub Activity][commits-shield]][commits]
 [![License][license-shield]](LICENSE)
 [![hacs][hacsbadge]][hacs]
 [![Community Forum][forum-shield]][forum]
 
-This integration retrieves forecast data from the ARPAE bulletin endpoint and current conditions from the ARPAE realtime observations feed.
+This is a fork/clone of the original [**Arpa Veneto Weather**](https://github.com/davidecavestro/arpa-veneto-weather/) integration, adapted for ARPA Emilia-Romagna (ARPAE) data sources by a free AI, so expect some rough edges.
+
+
+This integration retrieves forecast data from the ARPAE bulletin endpoint and current conditions from the ARPAE realtime observations feed, completing it with the `meteo_osservati` dataset for stations run by consortia and other third parties.
+
+> [!TIP]
+> This integration is maintained on a volunteer basis. If you find it useful and want to support its development, you can directly contribute with Pull Requests or fund the developer at [buymetokens.net/davidecavestro](https://buymetokens.net/davidecavestro) (or suggesting any other way to provide project-specific support).
 
 For this integration you must choose a weather station for current conditions and one of the bulletin zones for the forecast.
 
@@ -47,7 +51,7 @@ To add Arpa Emilia-Romagna Weather to your installation, do the following:
 
   | Parameter | Required | Default Value | Description |
   | --------- | -------- | ------------- | ----------- |
-  | `Weather Station` | Yes | None | Choose the ARPAE weather station for *current conditions*. The list is the one published by the realtime observations feed. |
+  | `Weather Station` | Yes | None | Choose the ARPAE weather station for *current conditions*. The list merges the realtime observations feed with the ARPAE `meteo_osservati` dataset, so stations owned by consortia and other third parties are selectable too. |
   | `Forecast Zone` | Yes | First zone | Choose the zone of the ARPAE bulletin used for the forecast, for example `FC-RA pianura`. |
 
 - Complete the wizard to save your data.
@@ -57,6 +61,12 @@ To add Arpa Emilia-Romagna Weather to your installation, do the following:
 > You can configure multiple instances of the Integration, so properly name them to avoid confusion.
 >
 > Entries created before the ARPAE rework may still point at an old station or zone. Use the integration's _Reconfigure_ action to pick the station and forecast zone again.
+
+### Third-party weather stations
+
+The ARPAE open-data realtime feed (`realtime.jsonl`) only publishes part of the regional network. Stations owned by consortia — for example _Consorzio di Difesa di Bologna e Ferrara_ or _Bonifica Renana_ — and by other bodies are not in it, even though the official [grafici per stazione](https://www.arpae.it/it/temi-ambientali/meteo/dati-e-osservazioni/dati-in-tempo-reale/grafici-per-stazione) page displays them.
+
+To make those stations selectable, the station list also reads the observable `meteo_osservati` REST dataset behind that page. When the configured station is not present in the realtime feed, the coordinator reads its measurements from `meteo_osservati` and maps them to the same sensors: air temperature, humidity, wind speed (converted from m/s to km/h), wind direction, hourly precipitation, pressure and solar radiation where the station measures them. Anything the dataset does not measure stays `unknown`.
 
 ### Preferences
 
@@ -162,7 +172,7 @@ Values taken from a METAR are marked with `source: metar`, so they can always be
 
 ## Data provenance
 
-A single weather station in Home Assistant is fed by several distinct ARPAE networks: the [meteogram](https://www.arpae.it/dati-ambientali/dati-in-diretta/meteo-idro-nivo/variabili_meteo) network for the observations, the [air quality](https://www.arpae.it/dati-ambientali/dati-in-diretta/aria/qualita-aria-dati-in-diretta) network, the [night sky brightness](https://www.arpae.it/dati-ambientali/dati-in-diretta/luminosita-del-cielo/brillanza) network and the forecast bulletin. They have different locations, different sampling intervals and different publishing latencies, and not every value is an observation: some are forecasts.
+A single weather station in Home Assistant is fed by several distinct ARPAE networks: the [meteogram](https://www.arpae.it/dati-ambientali/dati-in-diretta/meteo-idro-nivo/variabili_meteo) network for the observations (through the realtime feed, or through the `meteo_osservati` dataset for third-party stations), the [air quality](https://www.arpae.it/dati-ambientali/dati-in-diretta/aria/qualita-aria-dati-in-diretta) network, the [night sky brightness](https://www.arpae.it/dati-ambientali/dati-in-diretta/luminosita-del-cielo/brillanza) network and the forecast bulletin. They have different locations, different sampling intervals and different publishing latencies, and not every value is an observation: some are forecasts.
 
 Every entity therefore reports where its value comes from, as extra state attributes:
 
