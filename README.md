@@ -266,3 +266,16 @@ This project utilizes ARPAE's data strictly within the terms of the [Creative Co
 ARPAE disclaims all responsibility for the accuracy, completeness, and timeliness of the data provided via their API, and for any issues arising from its use. Users should refer to ARPAE's official site for authoritative information.
 
 For more details about ARPAE's copyright and licensing terms, visit their [website](http://www.arpae.it/).
+
+
+<!-- Badges -->
+[releases-shield]: https://img.shields.io/github/v/release/davidecavestro/arpa-emilia-romagna-weather?style=for-the-badge
+[releases]: https://github.com/davidecavestro/arpa-emilia-romagna-weather/releases
+
+[commits-shield]: https://img.shields.io/github/commit-activity/m/davidecavestro/arpa-emilia-romagna-weather?style=for-the-badge
+[commits]: https://github.com/davidecavestro/arpa-emilia-romagna-weather/commits/main
+
+[license-shield]: https://img.shields.io/github/license/davidecavestro/arpa-emilia-romagna-weather?style=for-the-badge
+
+[hacsbadge]: https://img.shields.io/badge/HACS-Custom-41BDF5.svg?style=for-the-badge
+[hacs]: https://github.com/hacs/default
