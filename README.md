@@ -8,7 +8,6 @@ Home Assistant unofficial integration for ARPA Emilia-Romagna (ARPAE) realtime w
 
 > [!NOTE]
 > Starting with Home Assistant 2026.11, HACS ships with Home Assistant as the **Marketplace** integration under **Settings > Marketplace**. The integration can still be installed via HACS on older Home Assistant versions.
-[![Community Forum][forum-shield]][forum]
 
 This is a fork/clone of the original [**Arpa Veneto Weather**](https://github.com/davidecavestro/arpa-veneto-weather/) integration, adapted for ARPA Emilia-Romagna (ARPAE) data sources by a free AI, so expect some rough edges.
 
