@@ -5,6 +5,9 @@ Home Assistant unofficial integration for ARPA Emilia-Romagna (ARPAE) realtime w
 [![GitHub Activity][commits-shield]][commits]
 [![License][license-shield]](LICENSE)
 [![hacs][hacsbadge]][hacs]
+
+> [!NOTE]
+> Starting with Home Assistant 2026.11, HACS ships with Home Assistant as the **Marketplace** integration under **Settings > Marketplace**. The integration can still be installed via HACS on older Home Assistant versions.
 [![Community Forum][forum-shield]][forum]
 
 This is a fork/clone of the original [**Arpa Veneto Weather**](https://github.com/davidecavestro/arpa-veneto-weather/) integration, adapted for ARPA Emilia-Romagna (ARPAE) data sources by a free AI, so expect some rough edges.
@@ -24,11 +27,15 @@ Platform | Description
 `weather` | A Home Assistant `weather` entity, with current data and twice-daily forecast data.
 `sensor` | A Home Assistant `sensor` entity, with all available sensor data from the API.
 
-## Installation through HACS (Recommended Method)
+## Installation
 
-If you are not familiar with HACS, or haven't installed it, I would recommend to [look through the HACS documentation](https://hacs.xyz/), before continuing.
+Starting with Home Assistant 2026.11, HACS ships with Home Assistant itself as the **Marketplace** integration under **Settings > Marketplace**: HACS itself doesn't need to be installed anymore. Before that version, install [HACS](https://hacs.xyz/) first.
 
-Register `davidecavestro/arpa-emilia-romagna-weather` as an [HACS custom repository](https://www.hacs.xyz/docs/faq/custom_repositories/).
+1. Install **Marketplace** (Home Assistant 2026.11+) or **HACS** (older versions).
+2. Register `davidecavestro/arpa-emilia-romagna-weather` as a custom repository:
+   - In Home Assistant 2026.11+: follow the [Marketplace publishing documentation](https://contributors.home-assistant.io/marketplace/) to add custom repositories through **Settings > Marketplace**.
+   - With HACS: add it as an [HACS custom repository](https://www.hacs.xyz/docs/faq/custom_repositories/).
+3. Install the integration.
 
 ## Manual installation
 
